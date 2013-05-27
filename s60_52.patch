@@ -201,6 +201,19 @@ index fdb7aca..e26fdac 100644
  	}
  
  
+diff --git a/epoc32/include/mw/eikmenup.h b/epoc32/include/mw/eikmenup.h
+index 5a58202..2c2659e 100644
+--- a/epoc32/include/mw/eikmenup.h
++++ b/epoc32/include/mw/eikmenup.h
+@@ -247,7 +247,7 @@ inline void CEikMenuPaneItem::CreateExtendedDataBlock()
+     {
+     if (!iExtendedData)
+         {
+-        TRAPD(err, ( iExtendedData = new (ELeave) CExtendedItemData() ) );
++        TRAP_IGNORE( iExtendedData = new (ELeave) CExtendedItemData() );
+         }
+     }
+ 
 diff --git a/epoc32/include/openfont.h b/epoc32/include/openfont.h
 index 0198631..4a7ea93 100644
 --- a/epoc32/include/openfont.h
@@ -329,6 +342,49 @@ index b6aa2a9..8246ba4 100644
  	COMMANDFILE_OPTION=
  else 
  	COMMANDFILE_OPTION=@
+diff --git a/epoc32/tools/epocrc.pl b/epoc32/tools/epocrc.pl
+index 6b8f7b1..50e4ea6 100755
+--- a/epoc32/tools/epocrc.pl
++++ b/epoc32/tools/epocrc.pl
+@@ -49,7 +49,8 @@ file and an associated header file.
+ 
+ The available options are
+ 
+-   -Dxxx, -Ixxx      -- C++ preprocessor arguments
++   -Dxxx, -Ixxx, -I- -- C++ preprocessor arguments
++   -iquote, -isystem -- C++ preprocessor arguments
+    -preincludeFILE   -- optional FILE to be used as a preinclude file in all preprocessing
+    -u                -- compile for use with Unicode EPOC
+    -ttmpdir          -- specify a directory for temporary files
+@@ -126,16 +127,16 @@ while (@ARGV)
+ 		$cpp_spec .= "-I- ";
+ 		next;
+ 		}
+-	if ($arg =~ /^-I(.*)$/)
++	if ($arg =~ /^(-I|-iquote|-isystem)(.*)$/)
+ 		{
+-		$cpp_spec .= "-I ";
+-		if ($1 eq "")
++		$cpp_spec .= "$1 ";
++		if ($2 eq "")
+ 		    {
+ 		    $arg = shift @ARGV;
+ 		    }
+ 		else
+ 		    {
+-		    $arg = $1;
++		    $arg = $2;
+ 		    }
+ 		$cpp_spec .= quoted_path($arg)." ";
+ 		next;
+@@ -402,7 +403,6 @@ if($opt_cpp)
+ 	die "* cpp failed\n" if ($cpp_status != 0);
+ 	}
+ 
+-
+ #-------------------------------------------------------
+ # Copy rpp files to epoc32\localisation if not checking
+ # rls items for localisation tags
 diff --git a/epoc32/tools/makdeps.pm b/epoc32/tools/makdeps.pm
 index b2d5ef1..d1ba5be 100644
 --- a/epoc32/tools/makdeps.pm
