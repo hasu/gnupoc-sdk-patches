@@ -1,0 +1,353 @@
+diff --git a/epoc32/include/app/cntdb.h b/epoc32/include/app/cntdb.h
+index b5367c7..c28becc 100644
+--- a/epoc32/include/app/cntdb.h
++++ b/epoc32/include/app/cntdb.h
+@@ -1289,7 +1289,7 @@ inline CContactEcomConverter* CContactEcomConverter::NewL(TUid aImplementationUi
+ 	
+ {
+ 	TAny* ptr = REComSession::CreateImplementationL(aImplementationUid,
+-													_FOFF(CContactEcomConverter,
++													_FOFF_OLD(CContactEcomConverter,
+ 														  iDtor_ID_Key));
+ 	return reinterpret_cast<CContactEcomConverter*>(ptr);
+ }
+@@ -1306,7 +1306,7 @@ inline CContactEcomConverter* CContactEcomConverter::NewL(TUid aImplementationUi
+ 	TPluginParameters partr(aContactFieldFilter,aCallback,aVersion,aExportTel);
+ 	
+ 	TAny* ptr = REComSession::CreateImplementationL(aImplementationUid,
+-													_FOFF(CContactEcomConverter,
++													_FOFF_OLD(CContactEcomConverter,
+ 													  iDtor_ID_Key), &partr);
+ 	return reinterpret_cast<CContactEcomConverter*>(ptr);
+ }
+diff --git a/epoc32/include/biditext.h b/epoc32/include/biditext.h
+index b421353..e9722bf 100644
+--- a/epoc32/include/biditext.h
++++ b/epoc32/include/biditext.h
+@@ -19,7 +19,12 @@
+ #include <e32std.h>
+ #include <gdi.h>
+ #include <bidi.h> // class TBidirectionalState::TRunInfo
++
++// to avoid GCC 4 warning about this not declaring anything
++#if __GNUC__ < 4
+ enum CGraphicsContext::TTextAlign;
++#endif
++
+ class MLineBreaker;
+ class RRunInfoArray;
+ class CBidiTextTls;
+diff --git a/epoc32/include/e32cmn.inl b/epoc32/include/e32cmn.inl
+index 0b79eac..c2ff6c5 100644
+--- a/epoc32/include/e32cmn.inl
++++ b/epoc32/include/e32cmn.inl
+@@ -2750,7 +2750,15 @@ buffer descriptor.
+ 
+ @return The packaged object.
+ */
+-	{return(*((T *)&this->iBuf[0]));}
++	{
++#if __GNUC__ < 4
++	  return(*((T *)&this->iBuf[0]));
++#else
++	  // &iBuf[0] is of type TUint8*
++	  T* __attribute__((__may_alias__)) p = ((T*)(&this->iBuf[0]));
++	  return *p;
++#endif
++	}
+ 
+ 
+ 
+@@ -7106,7 +7114,7 @@ inline TSecureId::operator TUid() const
+ inline const TSecureId* SSecureId::operator&() const
+ 	{ return (const TSecureId*)this; }
+ inline SSecureId::operator const TSecureId&() const
+-	{ /* coverity[return_local_addr] */ return (const TSecureId&)iId; }
++{ /* coverity[return_local_addr] */ return reinterpret_cast<const TSecureId&>(iId); } // http://blog.codeimproved.net/2010/06/getting-rid-of-the-nokia-qt-sdk-warnings/
+ inline SSecureId::operator TUint32() const
+ 	{ return iId; }
+ inline SSecureId::operator TUid() const
+@@ -7146,7 +7154,7 @@ inline TVendorId::operator TUid() const
+ inline const TVendorId* SVendorId::operator&() const
+ 	{ return (const TVendorId*)this; }
+ inline SVendorId::operator const TVendorId&() const
+-	{ /* coverity[return_local_addr] */ return (const TVendorId&)iId; }
++{ /* coverity[return_local_addr] */ return reinterpret_cast<const TVendorId&>(iId); } // http://blog.codeimproved.net/2010/06/getting-rid-of-the-nokia-qt-sdk-warnings/
+ inline SVendorId::operator TUint32() const
+ 	{ return iId; }
+ inline SVendorId::operator TUid() const
+diff --git a/epoc32/include/e32def.h b/epoc32/include/e32def.h
+index 74d291e..dc5a479 100644
+--- a/epoc32/include/e32def.h
++++ b/epoc32/include/e32def.h
+@@ -237,6 +237,27 @@
+ #define MUTABLE_CAST(type,exp) (exp)
+ #endif
+ 
++// this macro may be useful with value types;
++// __attribute(__may_alias__) may help with pointers
++// http://stackoverflow.com/questions/6313050/gcc-how-to-use-attribute-may-alias-properly-to-avoid-derefencing-type
++#if __GNUC__ < 4
++#define BIT_CAST(type,exp) (*(reinterpret_cast<type*>(&exp)))
++#else
++// http://blog.qt.digia.com/blog/2011/06/10/type-punning-and-strict-aliasing/
++// http://src.chromium.org/viewvc/chrome/trunk/src/base/basictypes.h?view=markup
++template <class Dest, class Source>
++inline Dest bit_cast(const Source& source) {
++  // Compile time assertion: sizeof(Dest) == sizeof(Source)
++  // A compile error here means your Dest and Source have different sizes.
++  typedef char VerifySizesAreEqual [sizeof(Dest) == sizeof(Source) ? 1 : -1];
++
++  Dest dest;
++  memcpy(&dest, &source, sizeof(dest));
++  return dest;
++}
++#define BIT_CAST(type,exp) (bit_cast<type>(exp))
++#endif
++
+ /**
+ @publishedAll
+ @deprecated
+@@ -450,6 +471,10 @@ the link object from the start of a list element.
+ #endif
+ #endif
+ 
++// we sometimes get warnings with __builtin_offsetof(c,f)
++// for those cases let us use the old definition
++#define _FOFF_OLD(c,f)			(((TInt)&(((c *)0x1000)->f))-0x1000)
++
+ 
+ 
+ /**
+diff --git a/epoc32/include/e32event.h b/epoc32/include/e32event.h
+index 171ff50..a125667 100644
+--- a/epoc32/include/e32event.h
++++ b/epoc32/include/e32event.h
+@@ -260,9 +260,27 @@ public:
+ 
+     /**
+     Default constructor
++
++    This would give warning with GCC 4.
++    We have:
++    TUint8 iType;
++
++    What is this supposed to do?
++    To zero out all first four fields in one go?
++
++    Apparently type-punning errors are important to resolve properly,
++    as failure to do so can result in incorrect optimizations.
+     */
++#if __GNUC__ < 4
+ 	inline TRawEvent()
+ 		{ *(TInt*)&iType=0; }
++#else
++	inline TRawEvent() :
++	  iType(0),
++	  iTip(0),
++	  iPointerNumber(0),
++	  iDeviceNumber(0) {}
++#endif
+ 		
+ 	/**
+ 	Gets the event type
+@@ -427,8 +445,20 @@ public:
+     Gets the hardware event object from the package buffer.
+     
+     @return The hardware event object.
++
++    http://blog.qt.digia.com/blog/2011/06/10/type-punning-and-strict-aliasing/
++    https://bugreports.qt-project.org/browse/QTBUG-19736
+     */
+-	inline TRawEvent &Event() const {return(*((TRawEvent *)&iBuf[0]));}
++	inline TRawEvent &Event() const {
++#if __GNUC__ < 4
++	  return(*((TRawEvent *)&iBuf[0]));
++#else
++	  // &iBuf[0] is of type TUint8*
++	  TRawEvent* __attribute__((__may_alias__)) p =
++	    ((TRawEvent*)(&iBuf[0]));
++	  return *p;
++#endif
++	}
+ 	};
+ 
+ #ifndef SYMBIAN_ENABLE_SPLIT_HEADERS
+diff --git a/epoc32/include/f32file.h b/epoc32/include/f32file.h
+index 2d56191..b349385 100644
+--- a/epoc32/include/f32file.h
++++ b/epoc32/include/f32file.h
+@@ -2169,7 +2169,10 @@ private:
+     TUint32 iData[KMaxDataSlots];   ///< used as a pool for various data. The derived classes are free to use it by SetVal()/GetVal()
+     }; 
+ 
++// to avoid GCC 4 warning about invalid access
++#if __GNUC__ < 4
+ __ASSERT_COMPILE(_FOFF(TVolFormatParam, iUId) == 0);
++#endif
+ 
+ 
+ /** package buffer for the objects of class TVolFormatParamBuf */
+diff --git a/epoc32/include/gsmuelem.inl b/epoc32/include/gsmuelem.inl
+index fdb7aca..e26fdac 100644
+--- a/epoc32/include/gsmuelem.inl
++++ b/epoc32/include/gsmuelem.inl
+@@ -445,7 +445,7 @@ inline TSmsFirstOctet::TSmsValidityPeriodFormat TSmsValidityPeriod::ValidityPeri
+  */
+ inline void TSmsValidityPeriod::SetValidityPeriodFormat(TSmsFirstOctet::TSmsValidityPeriodFormat aValidityPeriodFormat)
+ 	{
+-	iFirstOctet=(iFirstOctet&(~TSmsFirstOctet::ESmsVPFMask)|aValidityPeriodFormat);
++	  iFirstOctet=((iFirstOctet&(~TSmsFirstOctet::ESmsVPFMask))|aValidityPeriodFormat);
+ 	}
+ 
+ 
+diff --git a/epoc32/include/openfont.h b/epoc32/include/openfont.h
+index 0198631..4a7ea93 100644
+--- a/epoc32/include/openfont.h
++++ b/epoc32/include/openfont.h
+@@ -2449,7 +2449,7 @@ inline CShaperFactory* CShaperFactory::NewL(TUid aInterfaceImplUid)
+ 	return reinterpret_cast <CShaperFactory*> (
+ 		REComSession::CreateImplementationL( 
+ 			aInterfaceImplUid,
+-			_FOFF(CShaperFactory, iDtor_ID_Key))); 
++			_FOFF_OLD(CShaperFactory, iDtor_ID_Key))); 
+ 	}
+ 
+ /** Default destructor */
+diff --git a/epoc32/include/platform/d32locd.h b/epoc32/include/platform/d32locd.h
+index 1970840..3a2a722 100644
+--- a/epoc32/include/platform/d32locd.h
++++ b/epoc32/include/platform/d32locd.h
+@@ -207,9 +207,13 @@ public:
+ 	*/
+ 	TInt iMaxBytesPerFormat;
+     };
++
++// These give warnings with GCC 4.
++#if __GNUC__ < 4
+ //The following ASSERTs checks for offset of any TInt64 member be a multiple of 8 as per DEF045510
+ __ASSERT_COMPILE(_FOFF(TLocalDriveCaps,iSize)%8 == 0);
+ __ASSERT_COMPILE(_FOFF(TLocalDriveCapsV3,iFormatInfo.iCapacity) % 8 == 0);
++#endif
+ 
+ 
+ typedef TPckgBuf<TLocalDriveCapsV3> TLocalDriveCapsV3Buf;
+diff --git a/epoc32/include/platform/mw/msvstd.inl b/epoc32/include/platform/mw/msvstd.inl
+index 1e37e4a..b1e9b58 100644
+--- a/epoc32/include/platform/mw/msvstd.inl
++++ b/epoc32/include/platform/mw/msvstd.inl
+@@ -418,7 +418,7 @@ inline void TMsvEntry::SetSendingState(TUint aSendingState)
+ and KMsvSendStateMax. */
+ 	{
+ 	__ASSERT_DEBUG(aSendingState <= KMsvSendStateMax, User::Invariant());
+-	iData = iData & ~KMsvSendingStateFlags | aSendingState << KMsvSendingStateShift;
++	iData = ((iData & ~KMsvSendingStateFlags) | (aSendingState << KMsvSendingStateShift));
+ 	}
+ 
+ inline void TMsvEntry::SetPendingDelete(TBool aPendingDelete)
+diff --git a/epoc32/tools/checksource.pm b/epoc32/tools/checksource.pm
+index 1d41144..9af445d 100644
+--- a/epoc32/tools/checksource.pm
++++ b/epoc32/tools/checksource.pm
+@@ -46,6 +46,10 @@ my $makefileWarningPrefix = "\@echo ";
+ my $checksourcePrefix = "\@perl -S checksource.pl";
+ my $releaseLocationRoot = quotemeta ($ENV{EPOCROOT}."epoc32");
+ 
++my $epocgccver = $ENV{EPOCGCCVER};
++my $is_gcce4 = ($epocgccver =~ /^4/);
++my $iquote = ($is_gcce4 ? "-iquote" : "-I");
++my $isystem = ($is_gcce4 ? "-isystem" : "-I");
+ 
+ sub CheckSource_MetaData (\%$$$$;$;$)
+ 	{
+@@ -282,8 +286,7 @@ sub CheckSource_Includes ($\%$\@;\@;\@;$)
+ 			$platformPreInclude = $ENV{EPOCROOT}."epoc32/include/gcce/gcce.h";
+ 
+ 			my $GCCEinstall = cl_bpabi::getConfigVariable('CC_INSTALL_PATH');
+-			
+-			push @systemIncludes, "\"/\"$GCCEinstall/../lib/gcc/arm-none-symbianelf/3.4.3/include/\"\"";
++			push @systemIncludes, "\"/\"$GCCEinstall/../lib/gcc/arm-none-symbianelf/$epocgccver/include/\"\"";
+ 			}
+ 		}
+ 
+@@ -305,16 +308,18 @@ sub CheckSource_Includes ($\%$\@;\@;\@;$)
+ 		{
+ 		$include =~ s/\\$//;
+ 		$include = getDrive().$include if (($include !~ /^[a-zA-Z]:/) && ($include !~ /^[\"|\.]/));
+-		$call .= "-I $include ";
++		$call .= "$iquote $include ";
+ 		}
+ 
+-	$call .= "-I- " unless $noUserSystemDistinction;
++        if (! $is_gcce4) {
++          $call .= "-I- " unless $noUserSystemDistinction;
++        }
+ 
+ 	foreach my $include (@systemIncludes)
+ 		{
+ 		$include =~ s/\/$//;
+ 		$include = getDrive().$include if (($include !~ /^[a-zA-Z]:/) && ($include !~ /^[\"|\.]/));
+-		$call .= "-I $include ";
++		$call .= "$isystem $include ";
+ 		}
+ 
+ 	$sourceFile =~ s/\\/\//g;
+diff --git a/epoc32/tools/compilation_config/gcce.mk b/epoc32/tools/compilation_config/gcce.mk
+index b6aa2a9..8246ba4 100644
+--- a/epoc32/tools/compilation_config/gcce.mk
++++ b/epoc32/tools/compilation_config/gcce.mk
+@@ -19,12 +19,12 @@
+ 
+ #function to find the include path
+ define find-inc-path
+-	$(subst /bin/../,/,$(subst libgcc.a,%,$(shell $(CC) -print-libgcc-file-name)))
++	$(subst /bin/../,/,$(subst libgcc.a,,$(shell $(CC) -print-libgcc-file-name)))
+ endef
+ 
+ #function to find the installation path
+ define find_install_path
+-	$(subst /bin/../lib/gcc/arm-none-symbianelf/3.4.3,,$(subst libgcc.a,,$(shell $(CC) -print-libgcc-file-name)))
++	$(subst /bin/../lib/gcc/arm-none-symbianelf/$(EPOCGCCVER),,$(subst libgcc.a,,$(shell $(CC) -print-libgcc-file-name)))
+ endef
+ 
+ #function to include the version info
+@@ -137,6 +137,8 @@ SOFTVFPMODE_OPTION=-msoft-float
+ VFP2MODE_OPTION=
+ 
+ # Option to force all enumerations to be stored in as integers. 
++# Whether we use -fshort-enums or -fno-short-enums we are getting at least
++# arm-none-symbianelf-ld: warning: epoc32/release/armv5/urel/usrt3_1.lib(ucppinit.o) uses variable-size enums yet the output is to use 32-bit enums; use of enum values across objects may fail
+ ENUM_OPTION=
+ 
+ #---------------------------------
+@@ -457,7 +459,7 @@ VIA_FILE_SUFFIX=-\\\)
+ 
+ # option to take object file names from other(via) file, here the condition check for 
+ # GCCE compiler version is done as the via option differs for different versions in GCCE
+-ifeq ($(shell $(CC) -dumpversion),3.4.3)
++ifeq ($(EPOCGCCVER),3.4.3)
+ 	COMMANDFILE_OPTION=
+ else 
+ 	COMMANDFILE_OPTION=@
+diff --git a/epoc32/tools/makdeps.pm b/epoc32/tools/makdeps.pm
+index b2d5ef1..d1ba5be 100644
+--- a/epoc32/tools/makdeps.pm
++++ b/epoc32/tools/makdeps.pm
+@@ -212,10 +212,15 @@ sub Deps_GenDependsL ($@) {	# takes abs source filepath and list of Build Macros
+ 	$VariantIncludePath = Path_PrefixWithDriveAndQuote($VariantIncludePath);
+ 	}
+ 	my $CPPCommand;
++ 	my $epocgccver = $ENV{EPOCGCCVER};
++ 	my $is_gcce4 = ($epocgccver =~ /^4/);
++ 	my $iquote = ($is_gcce4 ? "-iquote" : "-I");
++ 	my $isystem = ($is_gcce4 ? "-isystem" : "-I");
++ 	my $isep = ""; # ($is_gcce4 ? "" : "-I- ");
+  	my $exe = &PreprocessorToUseExe();
+ 	$CPPCommand = "$exe -undef -M -MG -nostdinc $PrefixFileOption";
+-	$CPPCommand .= " -I $VariantIncludePath" if $VariantIncludePath;
+-	$CPPCommand .= " -I ".&Path_PrefixWithDriveAndQuote($ChopSrcPath)." @UserFlags -I- -I ".&Path_PrefixWithDriveAndQuote($ChopSysDecoyPath)." @SysFlags @PlatMacros @BldMacros $ProductVariantFlag ".&Path_PrefixWithDriveAndQuote($Src);
++ 	$CPPCommand .= " $isystem $VariantIncludePath" if $VariantIncludePath;
++ 	$CPPCommand .= " $iquote ".&Path_PrefixWithDriveAndQuote($ChopSrcPath)." @UserFlags $isep$isystem ".&Path_PrefixWithDriveAndQuote($ChopSysDecoyPath)." @SysFlags @PlatMacros @BldMacros $ProductVariantFlag ".&Path_PrefixWithDriveAndQuote($Src);
+ 	# Fix for Open C headers + winscw
+ 	$CPPCommand .= " -D__option\\\(x\\\)=0";
+ 
