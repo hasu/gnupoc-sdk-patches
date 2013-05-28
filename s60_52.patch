@@ -305,6 +305,48 @@ index 1d41144..9af445d 100644
  		}
  
  	$sourceFile =~ s/\\/\//g;
+diff --git a/epoc32/tools/cl_generic.pm b/epoc32/tools/cl_generic.pm
+index ca7cc54..898828e 100644
+--- a/epoc32/tools/cl_generic.pm
++++ b/epoc32/tools/cl_generic.pm
+@@ -826,6 +826,13 @@ sub Generic_BitMapBld {
+ }
+ 
+ sub Generic_ResrcBld {
++
++ 	my $epocgccver = $ENV{EPOCGCCVER};
++ 	my $is_gcce4 = ($epocgccver =~ /^4/);
++ 	my $iquote = ($is_gcce4 ? "-iquote" : "-I");
++ 	my $isystem = ($is_gcce4 ? "-isystem" : "-I");
++ 	my $isep = ""; # ($is_gcce4 ? "" : "-I- ");
++
+ 	my $ResourceRef=&main::ResourceRef;
+ 	my $WorkPath = &main::Path_Chop(&main::Path_WorkPath); # required for Lockit
+ 	my @RcompMacro=&main::MmpMacros;
+@@ -915,19 +922,19 @@ sub Generic_ResrcBld {
+ 		"GENERIC_RESOURCE : $quotedTrg\n",
+ 		"\n",
+ 		"$quotedTrg : ", &Generic_Quote($AbsSrc), " \$(DEPEND)\n",
+-		"\tperl -S epocrc.pl -m045,046,047 -I \"$ChopAbsSrcPath\""
++		"\tperl -S epocrc.pl -m045,046,047 $iquote \"$ChopAbsSrcPath\""
+ 	);
+ 	foreach (@ChopAbsUserIncPaths) {
+ 		&main::Output(
+-			" -I \"$_\""
++			" $iquote \"$_\""
+ 		);
+ 	}
+ 	&main::Output(
+-		" -I-"
++		" $isep"
+ 	);
+ 	foreach (@ChopAbsSysIncPaths) {
+ 		&main::Output(
+-			" -I \"$_\""
++			" $isystem \"$_\""
+ 		);
+ 	}
+ 	foreach(@RcompMacro) {
 diff --git a/epoc32/tools/compilation_config/gcce.mk b/epoc32/tools/compilation_config/gcce.mk
 index b6aa2a9..8246ba4 100644
 --- a/epoc32/tools/compilation_config/gcce.mk
@@ -343,7 +385,7 @@ index b6aa2a9..8246ba4 100644
  else 
  	COMMANDFILE_OPTION=@
 diff --git a/epoc32/tools/epocrc.pl b/epoc32/tools/epocrc.pl
-index 6b8f7b1..50e4ea6 100755
+index 6b8f7b1..f51e37c 100755
 --- a/epoc32/tools/epocrc.pl
 +++ b/epoc32/tools/epocrc.pl
 @@ -49,7 +49,8 @@ file and an associated header file.
@@ -356,7 +398,7 @@ index 6b8f7b1..50e4ea6 100755
     -preincludeFILE   -- optional FILE to be used as a preinclude file in all preprocessing
     -u                -- compile for use with Unicode EPOC
     -ttmpdir          -- specify a directory for temporary files
-@@ -126,16 +127,16 @@ while (@ARGV)
+@@ -126,16 +127,17 @@ while (@ARGV)
  		$cpp_spec .= "-I- ";
  		next;
  		}
@@ -365,7 +407,8 @@ index 6b8f7b1..50e4ea6 100755
  		{
 -		$cpp_spec .= "-I ";
 -		if ($1 eq "")
-+		$cpp_spec .= "$1 ";
++		#$cpp_spec .= "$1 "; # it seems rcomp does not quite support this, giving horribly long errors; possibly some system headers somewhat inappropriately do "" system includes, and that breaks delicate rcomp
++		$cpp_spec .= "-I "; # probably better just pass -I
 +		if ($2 eq "")
  		    {
  		    $arg = shift @ARGV;
@@ -377,7 +420,7 @@ index 6b8f7b1..50e4ea6 100755
  		    }
  		$cpp_spec .= quoted_path($arg)." ";
  		next;
-@@ -402,7 +403,6 @@ if($opt_cpp)
+@@ -402,7 +404,6 @@ if($opt_cpp)
  	die "* cpp failed\n" if ($cpp_status != 0);
  	}
  
